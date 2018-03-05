@@ -1,65 +1,55 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances, UndecidableInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Brainfuck.Cell where
+module Cell where
+
+import BoundBehavior
 
 import Control.Monad.Except
 import Data.Word
 
+instance {-# OVERLAPPABLE #-} (Bounded a, Enum a, Eq a) => Seekable a where
+  prev a | a == minBound = throwError SeekMin
+  prev a = return $ pred a
+
+  next a | a == maxBound = throwError SeekMax
+  next a = return $ succ a
+
+  ismin = (== minBound)
+  ismax = (== maxBound)
+
+  makemin _ = minBound
+  makemax _ = maxBound
+
 class Cell c where
-  incr :: (MonadError String m) => c -> m c
-  decr :: (MonadError String m) => c -> m c
+  decrC :: (MonadError String m) => c -> m c
+  incrC :: (MonadError String m) => c -> m c
   toCell :: (MonadError String m) => Int -> m c
   fromCell :: c -> Int
 
-data NoWrapCell a = NoWrapCell a deriving (Eq, Ord, Bounded, Show)
-data WrapCell a = WrapCell a deriving (Eq, Ord, Bounded, Show)
-data StopCell a = StopCell a deriving (Eq, Ord, Bounded, Show)
+data BoundedCell b c where
+  BoundedCell :: BoundBehavior b -> c -> BoundedCell b c
 
-instance (Enum a, Bounded a, Ord a) => Cell (NoWrapCell a) where
-  incr (NoWrapCell c)
-    | c == maxBound =
-      throwError "Cannot increment cell above maximum value"
-  incr (NoWrapCell c) = return . NoWrapCell $ succ c
+cellErrorMessage SeekMin = "Cannot decrement cell below minimum value"
+cellErrorMessage SeekMax = "Cannot increment cell above maximum value"
 
-  decr (NoWrapCell c)
-    | c == minBound =
-      throwError "Cannot decrement cell below minimum value"
-  decr (NoWrapCell c) = return . NoWrapCell $ pred c
+instance
+  (Seekable c, Bounded c, Enum c, Ord c, BoundBehaviorT b) =>
+  Cell (BoundedCell b c) where
+  decrC (BoundedCell b c) =
+    either (throwError . cellErrorMessage) return $
+    fmap (BoundedCell b) $ decr b c
+  incrC (BoundedCell b c) =
+    either (throwError . cellErrorMessage) return $
+    fmap (BoundedCell b) $ incr b c
 
-  toCell i | i > (fromEnum (maxBound :: a)) =
-             throwError "Cannot set cell value above maximum"
-  toCell i | i < (fromEnum (minBound :: a)) =
+  toCell i | i < (fromEnum (minBound :: c)) =
              throwError "Cannot set cell value below minimum"
-  toCell i = return $ NoWrapCell (toEnum i)
+  toCell i | i > (fromEnum (maxBound :: c)) =
+             throwError "Cannot set cell value above maximum"
+  toCell i = return $ BoundedCell mkBB (toEnum i)
+  fromCell (BoundedCell _ c) = fromEnum c
 
-  fromCell (NoWrapCell c) = fromEnum c
-
-instance (Enum a, Bounded a, Eq a) => Cell (WrapCell a) where
-  incr (WrapCell c) | c == maxBound = return $ WrapCell minBound
-  incr (WrapCell c) = return . WrapCell $ succ c
-
-  decr (WrapCell c) | c == minBound = return $ WrapCell maxBound
-  decr (WrapCell c) = return . WrapCell $ pred c
-
-  toCell i =
-    return . WrapCell . toEnum $
-    ((fromEnum (minBound :: a)) +
-      i `mod` (fromEnum (maxBound :: a) - fromEnum (minBound :: a)))
-
-  fromCell (WrapCell c) = fromEnum c
-
-instance (Enum a, Bounded a, Ord a) => Cell (StopCell a) where
-  incr (StopCell c) | c == maxBound = return $ StopCell maxBound
-  incr (StopCell c) = return . StopCell $ succ c
-
-  decr (StopCell c) | c == minBound = return $ StopCell minBound
-  decr (StopCell c) = return . StopCell $ pred c
-
-  toCell i | i > (fromEnum (maxBound :: a)) = return $ StopCell maxBound
-  toCell i | i < (fromEnum (minBound :: a)) = return $ StopCell minBound
-  toCell i = return $ StopCell (toEnum i)
-
-  fromCell (StopCell c) = fromEnum c
-
-defaultCell :: NoWrapCell Word8
-defaultCell = NoWrapCell 0
+defaultCell :: BoundedCell NoWrapT Word8
+defaultCell = BoundedCell NoWrap 0

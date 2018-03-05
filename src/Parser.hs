@@ -1,6 +1,6 @@
-module Brainfuck.Parser where
+module Parser where
 
-import Brainfuck.Program
+import Program
 
 import Data.Maybe
 
@@ -24,8 +24,8 @@ operation :: Parser Op
 operation =
   Incr <$ char '+' <|>
   Decr <$ char '-' <|>
-  MoveR <$ char '>' <|>
-  MoveL <$ char '<' <|>
+  MoveLeft <$ char '<' <|>
+  MoveRight <$ char '>' <|>
   Input <$ char ',' <|>
   Output <$ char '.' <|>
   (Loop <$> between (char '[') (char ']') program)

@@ -2,73 +2,76 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-module Brainfuck.Tape where
+{-# LANGUAGE GADTs #-}
+module Tape where
 
-import Brainfuck.Cell
+import BoundBehavior
+import Cell
 
 import Control.Monad.Except
 import Data.Word
 
+data ListZipper a = ListZipper [a] a [a]
+
+instance Seekable (ListZipper a) where
+  prev (ListZipper (x:xs) y ys) = return $ ListZipper xs x (y:ys)
+  prev (ListZipper [] _ _) = throwError SeekMin
+
+  next (ListZipper xs x (y:ys)) = return $ ListZipper (x:xs) y ys
+  next (ListZipper _ _ []) = throwError SeekMax
+
+  ismin (ListZipper [] _ _) = True
+  ismin _ = False
+
+  ismax (ListZipper _ _ []) = True
+  ismax _ = False
+
+  makemin (ListZipper xs v ys) =
+    let (first:rest) = reverse (v:xs) in
+      ListZipper [] first (rest ++ ys)
+
+  makemax (ListZipper xs v ys) =
+    let (last:rest) = reverse (v:ys) in
+      ListZipper  (rest ++ xs) last []
+
 class (Cell a) => Tape t a | t -> a where
-  moveR :: (MonadError String m) => t -> m t
-  moveL :: (MonadError String m) => t -> m t
+  moveLeft :: (MonadError String m) => t -> m t
+  moveRight :: (MonadError String m) => t -> m t
   get :: t -> a
-  set :: (MonadError String m) => t -> a -> m t
+  set :: t -> a -> t
   tapeFromList :: [a] -> t
 
   incrT :: (MonadError String m) => t -> m t
-  incrT t = (incr $ get t) >>= set t
+  incrT t = (incrC $ get t) >>= return . set t
   decrT :: (MonadError String m) => t -> m t
-  decrT t = (decr $ get t) >>= set t
+  decrT t = (decrC $ get t) >>= return . set t
   test :: t -> Bool
   test = (== 0) . fromCell . get
 
-data NoWrapTape a = NoWrapTape [a] a [a]
-data WrapTape a = WrapTape [a] a [a]
+data BoundedTape b c where
+  BoundedTape :: BoundBehavior b -> ListZipper c -> BoundedTape b c
 
-instance (Cell a) => Tape (NoWrapTape a) a where
-  moveR (NoWrapTape pre val (newval:post)) =
-    return $ NoWrapTape (val:pre) newval post
-  moveR (NoWrapTape _ _ []) = throwError "Cannot move past right end of tape"
+tapeErrorMessage SeekMin = "Cannot move before first element"
+tapeErrorMessage SeekMax = "Cannot move after last element"
 
-  moveL (NoWrapTape (newval:pre) val post) =
-    return $ NoWrapTape pre newval (val:post)
-  moveL (NoWrapTape [] _ _) = throwError "Cannot move past left end of tape"
+instance (Cell c, BoundBehaviorT b) => Tape (BoundedTape b c) c where
+  moveLeft (BoundedTape b l) =
+    either (throwError . tapeErrorMessage) return $
+    fmap (BoundedTape b) $ decr b l
+  moveRight (BoundedTape b l) =
+    either (throwError . tapeErrorMessage) return $
+    fmap (BoundedTape b) $ incr b l
+  get (BoundedTape _ (ListZipper _ v _)) = v
+  set (BoundedTape b (ListZipper xs _ ys)) v =
+    (BoundedTape b (ListZipper xs v ys))
+  tapeFromList (l:ls) = BoundedTape mkBB (ListZipper [] l ls)
 
-  get (NoWrapTape _ val _) = val
-
-  set (NoWrapTape pre _ post) val =
-    return $ NoWrapTape pre val post
-
-  tapeFromList (l:ls) =
-    NoWrapTape [] l ls
-
-instance (Cell a) => Tape (WrapTape a) a where
-  moveR (WrapTape pre val (newval:post)) =
-    return $ WrapTape (val:pre) newval post
-  moveR (WrapTape pre val []) =
-    let (newval:newpost) = reverse (val:pre) in
-      return $ WrapTape [] newval newpost
-
-  moveL (WrapTape (newval:pre) val post) =
-    return $ WrapTape pre newval (val:post)
-  moveL (WrapTape [] val post) =
-    let (newval:newpre) = reverse (val:post) in
-      return $ WrapTape [] newval newpre
-
-  get (WrapTape _ val _) = val
-
-  set (WrapTape pre _ post) val =
-    return $ WrapTape pre val post
-
-  tapeFromList (l:ls) =
-    WrapTape [] l ls
 
 defaultSize :: Int
 defaultSize = 30000
 
-defaultTape :: NoWrapTape (NoWrapCell Word8)
+defaultTape :: BoundedTape NoWrapT (BoundedCell NoWrapT Word8)
 defaultTape = tapeFromList (take defaultSize $ repeat defaultCell)
 
-defaultInfiniteTape :: NoWrapTape (NoWrapCell Word8)
+defaultInfiniteTape :: BoundedTape NoWrapT (BoundedCell NoWrapT Word8)
 defaultInfiniteTape = tapeFromList (repeat defaultCell)

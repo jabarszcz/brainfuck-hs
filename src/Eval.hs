@@ -2,15 +2,14 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-module Brainfuck.Eval where
+module Eval where
 
-import Brainfuck.Cell
-import Brainfuck.Program
-import Brainfuck.Tape
+import Cell
+import Program
+import Tape
 
 import Control.Monad
 import Control.Monad.Except
-
 import Data.Char
 
 class AbstractIO io a where
@@ -24,9 +23,9 @@ instance (Cell a) => AbstractIO (ExceptT String IO) a where
 step :: (Tape a b, MonadError String m, AbstractIO m b) => a -> Op -> m a
 step t Incr = incrT t
 step t Decr = decrT t
-step t MoveR = moveR t
-step t MoveL = moveL t
-step t Input = recv >>= set t
+step t MoveLeft = moveLeft t
+step t MoveRight = moveRight t
+step t Input = recv >>= return . set t
 step t Output = send (get t) >> return t
 step t (Loop ops) | not (test t) = eval t (ops ++ [Loop ops])
 step t _ = return t
